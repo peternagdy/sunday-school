@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>مدارس الأحد</title>
+<meta name="theme-color" content="#23404f">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="مدارس الأحد">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+/* An installable shell around the system, which runs on Google Apps Script (APP_URL below). */
+html, body { height: 100%; margin: 0; }
+body {
+  background-color: #23404f;
+  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.035) 0 2px, transparent 2px 5px), repeating-linear-gradient(-45deg, rgba(0,0,0,.06) 0 2px, transparent 2px 5px);
+  color: #f1ead6; font-family: Tahoma, 'Segoe UI', sans-serif; overflow: hidden;
+}
+#splash { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 24px; text-align: center; }
+#splash img { width: 132px; height: 132px; }
+#splash h1 { margin: 0; font-size: 26px; }
+#splash p { margin: 0; color: #cfd8dc; line-height: 1.7; }
+#splash button { margin-top: 8px; padding: 9px 22px; border: 1.5px solid #d9c79b; border-radius: 4px; background: none; color: #d9c79b; font: inherit; font-weight: 700; cursor: pointer; }
+#splash [hidden] { display: none; }
+iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #f8f1dd; opacity: 0; transition: opacity .25s; }
+iframe.ready { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="splash">
+  <img src="logo.png" alt="">
+  <h1>مدارس الأحد</h1>
+  <p>كنيسة القديسين مار مرقس والبابا أثناسيوس</p>
+  <p id="status">جاري الفتح…</p>
+  <button id="retry" type="button" hidden>إعادة المحاولة</button>
+</div>
+<iframe id="app" title="مدارس الأحد" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+<script>
+'use strict';
+const APP_URL = 'https://script.google.com/macros/s/AKfycbwCyv42noasQg74PFikNcQxvkD7zwLn99Q30N1odmsPy0e0_5IU--Wd3LYQ3SJn2hhfHQ/exec';
+
+const frame = document.getElementById('app'), statusEl = document.getElementById('status'), retry = document.getElementById('retry');
+
+function open() {
+  retry.hidden = true;
+  if (!navigator.onLine) {
+    statusEl.textContent = 'لا يوجد اتصال بالإنترنت. المنظومة تحتاج إلى اتصال لتعمل.';
+    retry.hidden = false;
+    return;
+  }
+  statusEl.textContent = 'جاري الفتح…';
+  frame.classList.remove('ready');
+  frame.src = APP_URL;
+}
+frame.addEventListener('load', () => { if (frame.src) frame.classList.add('ready'); });
+retry.addEventListener('click', open);
+window.addEventListener('online', () => { if (!frame.classList.contains('ready')) open(); });
+window.addEventListener('offline', () => {
+  if (frame.classList.contains('ready')) return;
+  statusEl.textContent = 'لا يوجد اتصال بالإنترنت. المنظومة تحتاج إلى اتصال لتعمل.';
+  retry.hidden = false;
+});
+open();
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
