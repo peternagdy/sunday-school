@@ -58,6 +58,13 @@ function open() {
 }
 frame.addEventListener('load', () => { if (frame.src) frame.classList.add('ready'); });
 retry.addEventListener('click', open);
+// The app asks for this when a new version goes live; only Google's frames may ask.
+window.addEventListener('message', e => {
+  if (!e.data || e.data.type !== 'ss-refresh') return;
+  if (!/^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|script\.google\.com)$/.test(e.origin)) return;
+  frame.classList.remove('ready');
+  frame.src = APP_URL + (APP_URL.includes('?') ? '&' : '?') + 'r=' + Date.now();
+});
 window.addEventListener('online', () => { if (!frame.classList.contains('ready')) open(); });
 window.addEventListener('offline', () => {
   if (frame.classList.contains('ready')) return;
