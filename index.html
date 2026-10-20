@@ -28,6 +28,13 @@ body {
 #splash [hidden] { display: none; }
 iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #f8f1dd; opacity: 0; transition: opacity .25s; }
 iframe.ready { opacity: 1; }
+/* the «turn on notifications» strip, shown over the app until it is answered */
+#push { position: fixed; z-index: 5; inset-inline: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 12px 14px; background: #f6e58a; color: #2b2614; border-inline-start: 5px solid #b3372b; box-shadow: 0 6px 18px rgba(0,0,0,.35); font-weight: 700; line-height: 1.5; }
+#push[hidden] { display: none; }
+#push span { flex: 1 1 200px; }
+#push button { padding: 7px 16px; border: 1.5px solid #2b2614; border-radius: 4px; background: none; color: inherit; font: inherit; cursor: pointer; }
+#push button.yes { background: #1c3566; border-color: #1c3566; color: #f8f1dd; }
 </style>
 </head>
 <body>
@@ -39,6 +46,11 @@ iframe.ready { opacity: 1; }
   <button id="retry" type="button" hidden>إعادة المحاولة</button>
 </div>
 <iframe id="app" title="مدارس الأحد" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+<div id="push" role="dialog" aria-label="الإشعارات" hidden>
+  <span>فعّل الإشعارات عشان يوصلك التذكير بالتحضير والملاحظات حتى والتطبيق مقفول.</span>
+  <button id="push-yes" class="yes" type="button">فعّل</button>
+  <button id="push-no" type="button">مش دلوقتي</button>
+</div>
 <script>
 'use strict';
 const APP_URL = 'https://script.google.com/macros/s/AKfycbwCyv42noasQg74PFikNcQxvkD7zwLn99Q30N1odmsPy0e0_5IU--Wd3LYQ3SJn2hhfHQ/exec';
@@ -58,12 +70,112 @@ function open() {
 }
 frame.addEventListener('load', () => { if (frame.src) frame.classList.add('ready'); });
 retry.addEventListener('click', open);
-// The app asks for this when a new version goes live; only Google's frames may ask.
+/**
+ * Whether a message comes from the app loaded in our own frame (Google nests the real page one or two frames
+ * deeper). Any Apps Script page shares the googleusercontent.com origin, so the origin alone proves nothing.
+ */
+function fromOurApp(source) {
+  for (let w = source, i = 0; w && i < 4; i++) {
+    if (w === frame.contentWindow) return true;
+    if (w === w.parent) return false;
+    w = w.parent;
+  }
+  return false;
+}
+
+// Messages from the app; only Google's frames inside this page may send them.
 window.addEventListener('message', e => {
-  if (!e.data || e.data.type !== 'ss-refresh') return;
-  if (!/^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|script\.google\.com)$/.test(e.origin)) return;
-  frame.classList.remove('ready');
-  frame.src = APP_URL + (APP_URL.includes('?') ? '&' : '?') + 'r=' + Date.now();
+  if (!e.data || !/^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|script\.google\.com)$/.test(e.origin) || !fromOurApp(e.source)) return;
+  if (e.data.type === 'ss-refresh') {   // a new version went live
+    frame.classList.remove('ready');
+    frame.src = APP_URL + (APP_URL.includes('?') ? '&' : '?') + 'r=' + Date.now();
+  } else if (e.data.type === 'ss-push-ready') {   // someone is signed in and the server sends notifications
+    appWin = e.source;
+    appOrigin = e.origin;
+    pushStart();
+  }
+});
+
+// ---------- notifications (Firebase Cloud Messaging) ----------
+// Public values from the Firebase console (Project settings → General → Your apps, and Cloud Messaging → Web Push certificates).
+// While they are empty, nothing about notifications is shown.
+// The web API key is meant to be public: it only names the project; sending needs the server's service account.
+const FIREBASE = {
+  apiKey: 'AIzaSyBujofCdW0wlPAuUVdCg2FC6Vkx8zlSp3o',
+  authDomain: 'sunday-c9803.firebaseapp.com',
+  projectId: 'sunday-c9803',
+  messagingSenderId: '139695110993',
+  appId: '1:139695110993:web:86eb4af4c1bc9050557170'
+};
+const VAPID_KEY = 'BItmLxudiVQETLUKfNpDVFr80ynEr3_-YWk0nHNQ377EANda69yrAr5jfuVHb32SZzFj94tU0eyaWs0l7H7K_YY';   // public half of the Web Push key pair
+const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+// The browser refuses either file if a single byte differs from the version checked here.
+const FIREBASE_SRI = {
+  'firebase-app-compat.js': 'sha384-AQ3POAMqIhwS81FrUH95ekxqBZHeP5tG2JfEL3+7GuTtfRLWnrRh32UxwzM+//A9',
+  'firebase-messaging-compat.js': 'sha384-XtSlZdmg0Ad5zf0AX4W9TGdm+dGjaNK4KG3lNFjfgbnxkCEuT9ugWXkLExgQTJ+6'
+};
+
+let appWin = null, appOrigin = '', firebaseLoading = null;
+const pushBox = document.getElementById('push');
+
+function tell(msg) { if (appWin) appWin.postMessage(msg, appOrigin); }
+
+function loadScript(name) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = FIREBASE_SDK + name; s.integrity = FIREBASE_SRI[name]; s.crossOrigin = 'anonymous';
+    s.onload = resolve; s.onerror = reject;
+    document.head.append(s);
+  });
+}
+function loadFirebase() {
+  if (!firebaseLoading) {
+    firebaseLoading = loadScript('firebase-app-compat.js')
+      .then(() => loadScript('firebase-messaging-compat.js'))
+      .then(() => { if (!firebase.apps.length) firebase.initializeApp(FIREBASE); })
+      .catch(e => { firebaseLoading = null; throw e; });
+  }
+  return firebaseLoading;
+}
+
+async function pushStart() {
+  // Another site showing this page inside its own frame gets no prompt and no token.
+  if (window.top !== window) return;
+  if (!FIREBASE || !VAPID_KEY || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    return tell({ type: 'ss-push-state', state: 'unsupported' });
+  }
+  if (Notification.permission === 'granted') return pushToken();
+  if (Notification.permission === 'denied') return tell({ type: 'ss-push-state', state: 'off' });
+  let later = 0;
+  try { later = Number(localStorage.getItem('ss-push-later') || 0); } catch (e) {}
+  if (Date.now() < later) return;
+  pushBox.hidden = false;
+}
+
+/** The FCM token of this phone, sent to the app, which stores it with the signed-in account. */
+async function pushToken() {
+  try {
+    await loadFirebase();
+    if (!(await firebase.messaging.isSupported())) return tell({ type: 'ss-push-state', state: 'unsupported' });
+    const reg = await navigator.serviceWorker.ready;
+    const token = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (token) tell({ type: 'ss-push-token', token: token });
+  } catch (e) {
+    tell({ type: 'ss-push-state', state: 'error' });
+  }
+}
+
+// The permission prompt must come from a tap on this page (iPhone refuses it otherwise).
+document.getElementById('push-yes').addEventListener('click', () => {
+  pushBox.hidden = true;
+  Notification.requestPermission().then(p => {
+    if (p === 'granted') pushToken();
+    else tell({ type: 'ss-push-state', state: p === 'denied' ? 'off' : '' });
+  });
+});
+document.getElementById('push-no').addEventListener('click', () => {
+  pushBox.hidden = true;
+  try { localStorage.setItem('ss-push-later', String(Date.now() + 7 * 86400000)); } catch (e) {}   // ask again in a week
 });
 window.addEventListener('online', () => { if (!frame.classList.contains('ready')) open(); });
 window.addEventListener('offline', () => {
